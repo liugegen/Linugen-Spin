@@ -5,6 +5,9 @@ import { monadTestnet } from './frame-wallet-provider';
 import { useChainContext } from './frame-wallet-provider';
 import { useEffect, useState, useCallback } from 'react';
 
+const ALCHEMY_API_KEY = 'VgGmMpwLBn6YH_WOsb1819q6STgxEkF-';
+const ALCHEMY_RPC_URL = `https://monad-testnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
+
 export default function SwitchNetworkBanner() {
   const chainId = useChainId();
   const { switchChain } = useSwitchChain();
@@ -22,7 +25,15 @@ export default function SwitchNetworkBanner() {
     setSwitchError(null);
     
     try {
-      await switchChain({ chainId: targetChainId });
+      await switchChain({ 
+        chainId: targetChainId,
+        addEthereumChainParameter: {
+          chainName: monadTestnet.name,
+          nativeCurrency: monadTestnet.nativeCurrency,
+          rpcUrls: [ALCHEMY_RPC_URL],
+          blockExplorerUrls: [monadTestnet.blockExplorers.default.url]
+        }
+      });
       // Success, banner will disappear automatically after chain changes
     } catch (error: any) {
       console.error('Failed to switch network:', error);

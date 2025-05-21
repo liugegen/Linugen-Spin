@@ -7,14 +7,25 @@ import { defineChain } from "viem";
 import { createContext, useContext, ReactNode } from "react";
 import { injected } from "wagmi/connectors";
 
-// Monad testnet configuration
+// Alchemy API Key
+const ALCHEMY_API_KEY = 'VgGmMpwLBn6YH_WOsb1819q6STgxEkF-';
+const ALCHEMY_RPC_URL = `https://monad-testnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
+
+// Monad testnet configuration with Alchemy RPC
 export const monadTestnet = defineChain({
   id: 10143,
   name: 'Monad Testnet',
   nativeCurrency: { name: 'Monad', symbol: 'MON', decimals: 18 },
   rpcUrls: {
-    default: { http: ['https://testnet-rpc.monad.xyz'] },
-    public: { http: ['https://testnet-rpc.monad.xyz'] }
+    default: { 
+      http: [ALCHEMY_RPC_URL]
+    },
+    public: { 
+      http: [ALCHEMY_RPC_URL]
+    },
+    alchemy: {
+      http: [ALCHEMY_RPC_URL]
+    }
   },
   blockExplorers: {
     default: { name: 'Monad Explorer', url: 'https://testnet.monadexplorer.com' }
@@ -22,34 +33,16 @@ export const monadTestnet = defineChain({
   testnet: true,
 });
 
-// Base Sepolia configuration (Commonly used in Warpcast)
-export const baseSepolia = defineChain({
-  id: 84532,
-  name: 'Base Sepolia',
-  nativeCurrency: { name: 'Sepolia Ether', symbol: 'ETH', decimals: 18 },
-  rpcUrls: {
-    default: { http: ['https://sepolia.base.org'] },
-    public: { http: ['https://sepolia.base.org'] }
-  },
-  blockExplorers: {
-    default: { name: 'Base Sepolia Explorer', url: 'https://sepolia.basescan.org' }
-  },
-  testnet: true,
-});
-
-// Config with both chains and MULTIPLE CONNECTORS
+// Config with ONLY Monad Testnet chain
 export const config = createConfig({
-  // List Monad Testnet as the primary chain
-  chains: [monadTestnet, baseSepolia],
+  chains: [monadTestnet], // Only Monad Testnet
   transports: {
-    [monadTestnet.id]: http('https://testnet-rpc.monad.xyz'),
-    [baseSepolia.id]: http('https://sepolia.base.org'),
+    [monadTestnet.id]: http(ALCHEMY_RPC_URL),
   },
-  // Multiple connectors for user to choose from
   connectors: [
-    // Farcaster Frame connector (labeled as 'Warpcast')
+    // Farcaster Frame connector
     farcasterFrame(),
-    // Metamask / Browser Wallet connector
+    // Injected wallet connector
     injected({
       shimDisconnect: true,
     }),
@@ -60,11 +53,15 @@ export const config = createConfig({
 type ChainContextType = {
   targetChainId: number;
   needsChainSwitch: (currentChainId: number) => boolean;
+  isMonadTestnet: (chainId: number) => boolean;
+  forceMonadTestnet: () => Promise<void>;
 };
 
 const ChainContext = createContext<ChainContextType>({
   targetChainId: monadTestnet.id,
   needsChainSwitch: (currentChainId) => currentChainId !== monadTestnet.id,
+  isMonadTestnet: (chainId) => chainId === monadTestnet.id,
+  forceMonadTestnet: async () => {},
 });
 
 export const useChainContext = () => useContext(ChainContext);
@@ -80,6 +77,51 @@ export default function FrameWalletProvider({
   const chainContextValue = {
     targetChainId: monadTestnet.id,
     needsChainSwitch: (currentChainId: number) => currentChainId !== monadTestnet.id,
+    isMonadTestnet: (chainId: number) => chainId === monadTestnet.id,
+    forceMonadTestnet: async () => {
+      if (typeof window === 'undefined' || !window.ethereum) return;
+      
+      try {
+        // Convert chainId to hex format for mobile wallets
+        const chainIdHex = `0x${monadTestnet.id.toString(16)}`;
+        console.log('Target chain ID:', chainIdHex);
+        console.log('Attempting to switch to chain:', chainIdHex);
+        
+        // Try to switch to Monad Testnet
+        await window.ethereum.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: chainIdHex }],
+        });
+      } catch (error: any) {
+        console.error('Switch chain error:', error);
+        console.error('Error code:', error.code);
+        console.error('Error message:', error.message);
+        
+        // If chain is not added, add it
+        if (error.code === 4902) {
+          const chainIdHex = `0x${monadTestnet.id.toString(16)}`;
+          console.log('Adding chain:', chainIdHex);
+          console.log('Chain details:', {
+            chainId: chainIdHex,
+            chainName: monadTestnet.name,
+            nativeCurrency: monadTestnet.nativeCurrency,
+            rpcUrls: [ALCHEMY_RPC_URL],
+            blockExplorerUrls: [monadTestnet.blockExplorers.default.url]
+          });
+          
+          await window.ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [{
+              chainId: chainIdHex,
+              chainName: monadTestnet.name,
+              nativeCurrency: monadTestnet.nativeCurrency,
+              rpcUrls: [ALCHEMY_RPC_URL],
+              blockExplorerUrls: [monadTestnet.blockExplorers.default.url]
+            }],
+          });
+        }
+      }
+    },
   };
 
   return (

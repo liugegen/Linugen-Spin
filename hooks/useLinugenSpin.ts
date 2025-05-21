@@ -38,6 +38,7 @@ export const getAddressUrl = (address: string): string => {
 export const useLinugenSpin = () => {
     const { address } = useAccount();
     const { writeContract } = useWriteContract();
+    const [isMobile, setIsMobile] = useState(false);
 
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -50,6 +51,16 @@ export const useLinugenSpin = () => {
         formattedNextReset: '',
         timeToNextReset: 24 * 60 * 60 // default 24 hours
     });
+
+    // Detect mobile device
+    useEffect(() => {
+        const checkMobile = () => {
+            const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera;
+            const mobileRegex = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
+            setIsMobile(mobileRegex.test(userAgent));
+        };
+        checkMobile();
+    }, []);
 
     // Wait for transaction receipt
     const { isLoading: isConfirming, data: txReceipt } = useWaitForTransactionReceipt({
@@ -125,6 +136,17 @@ export const useLinugenSpin = () => {
         // Format next reset time
         const formattedNextReset = formatNextResetTime(nextResetTime);
         
+        // Save to localStorage for persistence
+        if (address) {
+            const key = `spin_stats_${address}`;
+            localStorage.setItem(key, JSON.stringify({
+                used,
+                remaining,
+                total,
+                lastUpdate: Date.now()
+            }));
+        }
+        
         setDailySpinStats({
             used,
             remaining,
@@ -133,7 +155,39 @@ export const useLinugenSpin = () => {
             formattedNextReset,
             timeToNextReset: nextResetSeconds
         });
-    }, [safeSpinInfo, freeSpinsPerDay]);
+    }, [safeSpinInfo, freeSpinsPerDay, address]);
+
+    // Load persisted data on mount
+    useEffect(() => {
+        if (!address) return;
+        
+        const key = `spin_stats_${address}`;
+        const savedStats = localStorage.getItem(key);
+        
+        if (savedStats) {
+            try {
+                const stats = JSON.parse(savedStats);
+                const lastUpdate = new Date(stats.lastUpdate);
+                const now = new Date();
+                
+                // Only use saved stats if they're from today
+                if (lastUpdate.toDateString() === now.toDateString()) {
+                    setDailySpinStats(prev => ({
+                        ...prev,
+                        used: stats.used,
+                        remaining: stats.remaining,
+                        total: stats.total
+                    }));
+                } else {
+                    // Clear old data
+                    localStorage.removeItem(key);
+                }
+            } catch (err) {
+                console.error('Error loading saved spin stats:', err);
+                localStorage.removeItem(key);
+            }
+        }
+    }, [address]);
 
     // Update timer every second
     useEffect(() => {
@@ -142,6 +196,10 @@ export const useLinugenSpin = () => {
                 if (prev.timeToNextReset <= 0) {
                     // Trigger a refresh when timer reaches zero
                     refetchSpinInfo();
+                    // Clear saved stats on reset
+                    if (address) {
+                        localStorage.removeItem(`spin_stats_${address}`);
+                    }
                     return prev;
                 }
                 
@@ -159,23 +217,13 @@ export const useLinugenSpin = () => {
         }, 1000);
         
         return () => clearInterval(timer);
-    }, [refetchSpinInfo]);
+    }, [refetchSpinInfo, address]);
 
     // Format next reset time to show in UTC
     const formatNextResetTime = (date: Date): string => {
-        try {
-            // Show time in UTC format with date if it's tomorrow
-            const now = new Date();
-            const isToday = date.getUTCDate() === now.getUTCDate() && 
-                           date.getUTCMonth() === now.getUTCMonth() &&
-                           date.getUTCFullYear() === now.getUTCFullYear();
-            
-            // Format: "Today at HH:MM UTC" or "Tomorrow at HH:MM UTC"
-            return `${isToday ? 'Today' : 'Tomorrow'} at ${date.getUTCHours().toString().padStart(2, '0')}:${date.getUTCMinutes().toString().padStart(2, '0')} UTC`;
-        } catch (e) {
-            console.error('Error formatting date:', e);
-            return 'Soon';
-        }
+        const hours = date.getUTCHours().toString().padStart(2, '0');
+        const minutes = date.getUTCMinutes().toString().padStart(2, '0');
+        return `${hours}:${minutes} UTC`;
     };
 
     // Format remaining time as countdown
@@ -276,62 +324,84 @@ export const useLinugenSpin = () => {
         
         return new Promise<SpinResult | null>((resolve, reject) => {
             try {
-                writeContract({
-                    address: CONTRACT_ADDRESS,
-                    abi: LINUGEN_SPIN_ABI,
-                    functionName: 'spin',
-                }, {
-                    onSuccess: async (hash) => {
-                        setLatestTxHash(hash);
-                        
-                        // In a real implementation, we would read results from blockchain events
-                        try {
-                            // Simulate reading data from blockchain
-                            // Wait a bit to simulate blockchain time
-                            await new Promise(r => setTimeout(r, 1500));
-                            
-                            // Get badge level from transaction
-                            const badgeLevel = await getBadgeLevelFromTransaction(hash);
-                            
-                            const result: SpinResult = {
-                                badgeLevel,
-                                txHash: hash
-                            };
-                            
-                            // Pre-emptively update spin counts to ensure immediate UI feedback
-                            // This will be updated accurately when refetchSpinInfo() below
-                            if (safeSpinInfo) {
-                                if (Number(safeSpinInfo.freeSpinsRemaining) > 0) {
-                                    // Update stats for free spin usage
-                                    setDailySpinStats(prev => ({
-                                        ...prev,
-                                        remaining: Math.max(0, prev.remaining - 1),
-                                        used: Math.min(prev.total, prev.used + 1)
-                                    }));
-                                }
-                            }
-                            
-                            // Refresh data
-                            refetchSpinInfo();
-                            refetchNftBalance();
-                            
-                            setLoading(false);
-                            resolve(result);
-                        } catch (err) {
-                            console.error('Error processing transaction:', err);
-                            setError('Error processing spin results. Please check your transaction.');
-                            setLoading(false);
-                            reject(err);
-                        }
-                    },
-                    onError: (err) => {
-                        setError(err.message || 'Spin failed');
-                        setLoading(false);
-                        reject(err);
-                    }
-                });
+                // Add delay for mobile devices
+                if (isMobile) {
+                    setTimeout(() => {
+                        executeSpin(resolve, reject);
+                    }, 1000);
+                } else {
+                    executeSpin(resolve, reject);
+                }
             } catch (err: any) {
                 setError(err.message || 'Spin failed');
+                setLoading(false);
+                reject(err);
+            }
+        });
+    };
+
+    const executeSpin = (resolve: (value: SpinResult | null) => void, reject: (reason?: any) => void) => {
+        writeContract({
+            address: CONTRACT_ADDRESS,
+            abi: LINUGEN_SPIN_ABI,
+            functionName: 'spin',
+        }, {
+            onSuccess: async (hash) => {
+                setLatestTxHash(hash);
+                
+                try {
+                    // Simulate reading data from blockchain
+                    // Wait a bit to simulate blockchain time
+                    await new Promise(r => setTimeout(r, isMobile ? 2000 : 1500));
+                    
+                    // Get badge level from transaction
+                    const badgeLevel = await getBadgeLevelFromTransaction(hash);
+                    
+                    const result: SpinResult = {
+                        badgeLevel,
+                        txHash: hash
+                    };
+                    
+                    // Pre-emptively update spin counts to ensure immediate UI feedback
+                    if (safeSpinInfo) {
+                        if (Number(safeSpinInfo.freeSpinsRemaining) > 0) {
+                            // Update stats for free spin usage
+                            setDailySpinStats(prev => ({
+                                ...prev,
+                                remaining: Math.max(0, prev.remaining - 1),
+                                used: Math.min(prev.total, prev.used + 1)
+                            }));
+                        }
+                    }
+                    
+                    // Refresh data
+                    refetchSpinInfo();
+                    refetchNftBalance();
+                    
+                    setLoading(false);
+                    resolve(result);
+                } catch (err) {
+                    console.error('Error processing transaction:', err);
+                    setError('Error processing spin results. Please check your transaction.');
+                    setLoading(false);
+                    reject(err);
+                }
+            },
+            onError: (err: any) => {
+                console.error('Spin transaction failed:', err);
+                
+                // Enhanced error handling
+                let errorMessage = err.message || 'Spin failed';
+                
+                if (errorMessage.includes('user rejected')) {
+                    errorMessage = 'You rejected the transaction. Please try again.';
+                } else if (errorMessage.includes('insufficient funds')) {
+                    errorMessage = 'Insufficient MON tokens for gas fee. Please add more MON tokens to your wallet.';
+                } else if (errorMessage.includes('execution reverted')) {
+                    errorMessage = 'Transaction failed. You may not have enough spins or there was an error in the contract.';
+                }
+                
+                setError(errorMessage);
                 setLoading(false);
                 reject(err);
             }
@@ -348,6 +418,11 @@ export const useLinugenSpin = () => {
         try {
             const value = spinPrice * BigInt(Math.floor(amount * 1000)) / BigInt(1000);
             
+            // Add delay for mobile devices
+            if (isMobile) {
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            
             writeContract({
                 address: CONTRACT_ADDRESS,
                 abi: LINUGEN_SPIN_ABI,
@@ -359,7 +434,7 @@ export const useLinugenSpin = () => {
                     // Refresh immediately to show updated premium spin count
                     setTimeout(() => {
                         refetchSpinInfo();
-                    }, 1000);
+                    }, isMobile ? 2000 : 1000);
                 },
                 onError: (err) => {
                     setError(err.message || 'Purchase failed');

@@ -1,6 +1,6 @@
 import { useMiniAppContext } from "@/hooks/use-miniapp-context";
 import { parseEther } from "viem";
-import { monadTestnet } from "viem/chains";
+import { monadTestnet } from "@/components/frame-wallet-provider";
 import {
   useAccount,
   useConnect,
@@ -9,6 +9,9 @@ import {
   useSwitchChain,
 } from "wagmi";
 import { farcasterFrame } from "@farcaster/frame-wagmi-connector";
+
+const ALCHEMY_API_KEY = 'VgGmMpwLBn6YH_WOsb1819q6STgxEkF-';
+const ALCHEMY_RPC_URL = `https://monad-testnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
 
 export function WalletActions() {
   const { isEthProviderAvailable } = useMiniAppContext();
@@ -71,7 +74,15 @@ export function WalletActions() {
             ) : (
               <button
                 className="bg-white text-black rounded-md p-2 text-sm"
-                onClick={() => switchChain({ chainId: monadTestnet.id })}
+                onClick={() => switchChain({ 
+                  chainId: monadTestnet.id,
+                  addEthereumChainParameter: {
+                    chainName: monadTestnet.name,
+                    nativeCurrency: monadTestnet.nativeCurrency,
+                    rpcUrls: [ALCHEMY_RPC_URL],
+                    blockExplorerUrls: [monadTestnet.blockExplorers.default.url]
+                  }
+                })}
               >
                 Switch to Monad Testnet
               </button>

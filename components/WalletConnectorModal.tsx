@@ -5,8 +5,12 @@ import { useConnect, useAccount, useDisconnect, useSwitchChain } from 'wagmi';
 import { Dialog, Transition } from '@headlessui/react';
 import { monadTestnet } from './frame-wallet-provider';
 
+const ALCHEMY_API_KEY = 'VgGmMpwLBn6YH_WOsb1819q6STgxEkF-';
+const ALCHEMY_RPC_URL = `https://monad-testnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
+
 export default function WalletConnectorModal() {
   const [isConnecting, setIsConnecting] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const { isConnected, address, chainId } = useAccount();
   const { connectAsync, connectors, error, isPending } = useConnect();
   const { disconnect } = useDisconnect();
@@ -14,22 +18,49 @@ export default function WalletConnectorModal() {
 
   const isWrongNetwork = chainId !== monadTestnet.id;
 
+  // Detect mobile device
+  useEffect(() => {
+    const checkMobile = () => {
+      const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera;
+      const mobileRegex = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
+      setIsMobile(mobileRegex.test(userAgent));
+    };
+    checkMobile();
+  }, []);
+
   // Auto-connect function definition
   const autoConnect = useCallback(async () => {
     if (!isConnected && !isConnecting && !isPending) {
       setIsConnecting(true);
       try {
         if (connectors && connectors.length > 0) {
-          const connector = connectors[0]; // Usually this is injected (MetaMask)
-          await connectAsync({ connector });
+          // For mobile, prefer injected connector
+          const connector = connectors.find(c => c.id === 'injected') || connectors[0];
+          
+          // Add delay for mobile devices
+          if (isMobile) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+          
+          await connectAsync({ 
+            connector
+          });
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error('Auto-connect failed:', error);
+        // Enhanced error handling for mobile
+        if (isMobile && error?.message) {
+          if (error.message.includes('user rejected')) {
+            console.warn('User rejected connection in mobile wallet');
+          } else if (error.message.includes('timeout')) {
+            console.warn('Connection timed out on mobile device');
+          }
+        }
       } finally {
         setIsConnecting(false);
       }
     }
-  }, [connectAsync, connectors, isConnected, isConnecting, isPending]);
+  }, [connectAsync, connectors, isConnected, isConnecting, isPending, isMobile]);
   
   // Auto-connect to wallet and Monad Testnet
   useEffect(() => {
@@ -40,12 +71,33 @@ export default function WalletConnectorModal() {
   const handleSwitchNetwork = useCallback(async () => {
     if (isConnected && isWrongNetwork) {
       try {
-        await switchChain({ chainId: monadTestnet.id });
-      } catch (e) {
+        // Add delay for mobile devices
+        if (isMobile) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        
+        await switchChain({ 
+          chainId: monadTestnet.id,
+          addEthereumChainParameter: {
+            chainName: monadTestnet.name,
+            nativeCurrency: monadTestnet.nativeCurrency,
+            rpcUrls: [ALCHEMY_RPC_URL],
+            blockExplorerUrls: [monadTestnet.blockExplorers.default.url]
+          }
+        });
+      } catch (e: any) {
         console.error('Network switch failed:', e);
+        // Enhanced error handling for mobile
+        if (isMobile && e?.message) {
+          if (e.message.includes('user rejected')) {
+            console.warn('User rejected network switch in mobile wallet');
+          } else if (e.message.includes('timeout')) {
+            console.warn('Network switch timed out on mobile device');
+          }
+        }
       }
     }
-  }, [isConnected, isWrongNetwork, switchChain]);
+  }, [isConnected, isWrongNetwork, switchChain, isMobile]);
 
   useEffect(() => {
     if (isConnected && isWrongNetwork) {
@@ -62,7 +114,7 @@ export default function WalletConnectorModal() {
               onClick={handleSwitchNetwork}
               className="text-sm px-2 py-1 bg-yellow-600 text-white rounded-md hover:bg-yellow-700"
             >
-              Switch to Monad
+              {isMobile ? 'Switch in Wallet' : 'Switch to Monad'}
             </button>
           ) : (
             <span className="text-sm px-2 py-1 bg-green-600 text-white rounded-md">

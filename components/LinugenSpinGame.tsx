@@ -11,6 +11,7 @@ import { useChainContext } from './frame-wallet-provider';
 import { useForceMonadChain } from '@/hooks/useForceMonadChain';
 import { Dialog, Transition } from '@headlessui/react';
 import { MONAD_EXPLORER_URL } from '@/hooks/useLinugenSpin';
+import { useLocalStorage } from '@/hooks/useLocalStorage';
 
 // Countdown Timer Component
 const CountdownTimer: React.FC<{ seconds: number }> = ({ seconds }) => {
@@ -229,6 +230,96 @@ const SpinResultPopup: React.FC<SpinResultPopupProps> = ({ isOpen, closeModal, r
   );
 };
 
+// Type definitions for BuySpinsPopup props
+interface BuySpinsPopupProps {
+  isOpen: boolean;
+  closeModal: () => void;
+  txHash: string | null;
+}
+
+// Popup for successful premium spin purchase
+const BuySpinsPopup: React.FC<BuySpinsPopupProps> = ({ isOpen, closeModal, txHash }) => {
+  const getTxUrl = (hash: string): string => {
+    if (!hash) return '#';
+    return `${MONAD_EXPLORER_URL}/tx/${hash}`;
+  };
+
+  return (
+    <Transition appear show={isOpen} as={Fragment}>
+      <Dialog as="div" className="relative z-50" onClose={closeModal}>
+        <Transition.Child
+          as={Fragment}
+          enter="ease-out duration-300"
+          enterFrom="opacity-0"
+          enterTo="opacity-100"
+          leave="ease-in duration-200"
+          leaveFrom="opacity-100"
+          leaveTo="opacity-0"
+        >
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm" />
+        </Transition.Child>
+
+        <div className="fixed inset-0 overflow-y-auto">
+          <div className="flex min-h-full items-center justify-center p-4 text-center">
+            <Transition.Child
+              as={Fragment}
+              enter="ease-out duration-300"
+              enterFrom="opacity-0 scale-95"
+              enterTo="opacity-100 scale-100"
+              leave="ease-in duration-200"
+              leaveFrom="opacity-100 scale-100"
+              leaveTo="opacity-0 scale-95"
+            >
+              <Dialog.Panel className="w-full max-w-md transform overflow-hidden rounded-2xl bg-gray-900 border border-purple-800/30 p-5 sm:p-6 text-left align-middle shadow-xl transition-all">
+                <Dialog.Title
+                  as="h3"
+                  className="text-xl sm:text-2xl font-bold leading-6 text-white mb-5 text-center"
+                >
+                  Purchase Successful!
+                </Dialog.Title>
+                
+                <div className="mt-2 text-center">
+                  <p className="text-gray-300 text-sm mb-4">
+                    Your premium spins have been successfully purchased.
+                  </p>
+                  {txHash && (
+                    <div className="mt-4 text-sm">
+                      <p className="text-gray-400 mb-2">Transaction confirmed on <span className="text-purple-400">Monad Testnet</span>:</p>
+                      <div className="bg-gray-800 p-2 rounded-lg mb-2 overflow-hidden shadow-inner">
+                        <p className="truncate text-gray-400 text-xs">
+                          {txHash}
+                        </p>
+                      </div>
+                      <a 
+                        href={getTxUrl(txHash)} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="bg-purple-600 hover:bg-purple-700 text-white py-2.5 px-4 rounded-md text-sm inline-block mt-2 transition-colors shadow-md active:bg-purple-800"
+                      >
+                        View on Monad Explorer
+                      </a>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-6 flex justify-center">
+                  <button
+                    type="button"
+                    className="inline-flex justify-center rounded-md border border-transparent bg-purple-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-purple-700 active:bg-purple-800 focus:outline-none transition-colors shadow-md"
+                    onClick={closeModal}
+                  >
+                    Close
+                  </button>
+                </div>
+              </Dialog.Panel>
+            </Transition.Child>
+          </div>
+        </div>
+      </Dialog>
+    </Transition>
+  );
+};
+
 const LinugenSpinGame: React.FC = () => {
     const { address, isConnected } = useAccount();
     const chainId = useChainId();
@@ -262,11 +353,13 @@ const LinugenSpinGame: React.FC = () => {
     const [showResultPopup, setShowResultPopup] = useState(false);
     const [badges, setBadges] = useState({ bronze: 0, silver: 0, gold: 0 });
     const [refreshTimer, setRefreshTimer] = useState(0);
+    const [buyTxHash, setBuyTxHash] = useState<string | null>(null);
+    const [showBuyPopup, setShowBuyPopup] = useState(false);
     
     // Local state to track spin counts (for responsive UI after spin)
-    const [localFreeSpins, setLocalFreeSpins] = useState<number | null>(null);
-    const [localPremiumSpins, setLocalPremiumSpins] = useState<number | null>(null);
-    const [localSpinsUsed, setLocalSpinsUsed] = useState<number | null>(null);
+    const [localFreeSpins, setLocalFreeSpins] = useLocalStorage<number | null>('localFreeSpins', null);
+    const [localPremiumSpins, setLocalPremiumSpins] = useLocalStorage<number | null>('localPremiumSpins', null);
+    const [localSpinsUsed, setLocalSpinsUsed] = useLocalStorage<number | null>('localSpinsUsed', null);
     
     // Force refresh timer every second to show accurate countdown
     useEffect(() => {
@@ -335,6 +428,11 @@ const LinugenSpinGame: React.FC = () => {
         setShowResultPopup(false);
     };
 
+    // Function to close buy popup
+    const closeBuyPopup = () => {
+        setShowBuyPopup(false);
+    };
+
     // Log ketika user melakukan spin
     const logSpinAction = (action: string, details: any) => {
         if (process.env.NODE_ENV !== 'production') {
@@ -346,12 +444,15 @@ const LinugenSpinGame: React.FC = () => {
     const forceUpdateSpinCountsInUI = (useFreeSpins: boolean) => {
         const newFreeSpins = useFreeSpins ? Math.max(0, freeSpins - 1) : freeSpins;
         const newPremiumSpins = !useFreeSpins ? Math.max(0, premiumSpins - 1) : premiumSpins;
-        const newSpinsUsed = useFreeSpins ? spinsUsedToday + 1 : spinsUsedToday;
+        const newSpinsUsed = spinsUsedToday + 1; // Always increment spins used
+        
+        // Store the current date to track daily resets
+        localStorage.setItem('lastSpinDate', new Date().toISOString().split('T')[0]);
         
         // First update React state
         setLocalFreeSpins(newFreeSpins);
-        setLocalSpinsUsed(newSpinsUsed);
         setLocalPremiumSpins(newPremiumSpins);
+        setLocalSpinsUsed(newSpinsUsed);
         
         // Then direct DOM manipulation for immediate visual feedback
         try {
@@ -372,13 +473,11 @@ const LinugenSpinGame: React.FC = () => {
             if (spinsUsedElement) {
                 spinsUsedElement.textContent = `${newSpinsUsed}`;
                 
-                if (useFreeSpins) {
-                    // Visual feedback animation for increasing used spins
-                    spinsUsedElement.classList.add('text-green-400');
-                    setTimeout(() => {
-                        spinsUsedElement.classList.remove('text-green-400');
-                    }, 1000);
-                }
+                // Always show animation for spins used (even for premium)
+                spinsUsedElement.classList.add('text-green-400');
+                setTimeout(() => {
+                    spinsUsedElement.classList.remove('text-green-400');
+                }, 1000);
             }
             
             const premiumSpinElement = document.getElementById('premium-spin-count');
@@ -547,7 +646,7 @@ const LinugenSpinGame: React.FC = () => {
         // Determine if we're using free spins or premium spins
         const useFreeSpins = freeSpins > 0;
         
-        // IMMEDIATELY update UI for instant feedback
+        // IMMEDIATELY update UI for instant feedback - including used today counter
         forceUpdateSpinCountsInUI(useFreeSpins);
 
         setSpinning(true);
@@ -629,20 +728,44 @@ const LinugenSpinGame: React.FC = () => {
                 });
             }
             
-            // Execute blockchain transaction
-            await handleBuySpins(buyAmount);
-            
-            // Reset amount to 1 for next purchase
-            setBuyAmount(1);
-            
-            // Refresh data from blockchain after delay
-            setTimeout(() => {
-                refetchSpinInfo();
-            }, 1000);
+            // Execute blockchain transaction and directly show the popup
+            handleBuySpins(buyAmount)
+                .then(response => {
+                    console.log('Buy spins response:', response);
+                    
+                    // Since handleBuySpins might return void, just show the popup
+                    setBuyTxHash(null);
+                    setShowBuyPopup(true);
+                    
+                    // Reset amount to 1 for next purchase
+                    setBuyAmount(1);
+                    
+                    // Refresh data from blockchain after delay
+                    setTimeout(() => {
+                        refetchSpinInfo();
+                    }, 1000);
+                })
+                .catch(err => {
+                    console.error('Buy spins transaction failed:', err);
+                    alert('Failed to buy spins. Please try again.');
+                    
+                    // Revert UI state on error
+                    setLocalPremiumSpins(null);
+                    
+                    // Update UI to reflect failure
+                    try {
+                        const premiumSpinElement = document.getElementById('premium-spin-count');
+                        if (premiumSpinElement) {
+                            premiumSpinElement.textContent = `${premiumSpins}`;
+                        }
+                    } catch (e) {
+                        console.error('Error updating DOM elements:', e);
+                    }
+                });
         } catch (err) {
-            // Revert state in case of error
-            setLocalPremiumSpins(null);
+            // Outer try/catch - handles any other errors
             console.error('Buy spins failed:', err);
+            setLocalPremiumSpins(null);
         }
     };
 
@@ -654,6 +777,13 @@ const LinugenSpinGame: React.FC = () => {
                 closeModal={closeResultPopup} 
                 result={lastResult} 
                 txHash={txHash}
+            />
+            
+            {/* Buy Spins Popup */}
+            <BuySpinsPopup 
+                isOpen={showBuyPopup} 
+                closeModal={closeBuyPopup} 
+                txHash={buyTxHash}
             />
             
             {isWrongNetwork && (
